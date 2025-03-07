@@ -9,3 +9,4 @@ pipenv==2024.4.1
 streamlit==1.42.2
 streamlit_folium==0.24.0
 folium==0.19.5
+seaborn==0.12.2
