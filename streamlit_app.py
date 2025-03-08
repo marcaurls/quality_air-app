@@ -21,45 +21,68 @@ def pm25_trend(df):
     pm25_trend_df = df.groupby(by=['station', 'year'])["PM2.5"].mean().sort_values(ascending=False).reset_index()
     return pm25_trend_df
 
-def create_rfm_df(df):
-    df['date'] = pd.to_datetime(df['date'])
-    recency = df[df['PM2.5'] > 100].groupby('station')['date'].max()
-    recency = (df['date'].max() - recency).dt.days
-
-    # berapa kali dalam setahun polusi tinggi terjadi
-    frequency = df[df['PM2.5'] > 100].groupby("station")['date'].count()
-
-    # rata-rata PM2.5 per statiun
-    magnitude = df.groupby('station')['PM2.5'].mean()
-
-
-    rfm = pd.DataFrame({"station":recency.index, "Recency":recency.values, "Frequency":frequency.values, "Magnitude":magnitude.values})
-
-    # skala nilai
-    rfm['R_Score'] = pd.cut(rfm['Recency'].rank(method='first'), bins=4, labels=[4,3,2,1])
-    rfm['F_Score'] = pd.cut(rfm['Frequency'].rank(method='first'), bins=4, labels=[1,2,3,4])
-    rfm['M_Score'] = pd.cut(rfm['Magnitude'].rank(method='first'), bins=4, labels=[1,2,3,4])
-
-    rfm["RFM_Score"] = rfm['R_Score'].astype(int) + rfm['F_Score'].astype(int) + rfm['M_Score'].astype(int)
-    
-    return rfm
-
 def create_folium(df):
     map = df.groupby(by='station')['PM2.5'].nunique().sort_values(ascending=False).reset_index()
     return map
 
+def air_quality_trend(df):
+    air_quality_df = df.groupby(by=['station', 'year']).agg({
+        "PM2.5": "mean",
+        "PM10": "mean",
+        "SO2": "mean",
+        "NO2": "mean",
+        "CO": "mean",
+        "O3": "mean"
+    }).reset_index()
+
+    def categorize_air_quality(row):
+        if row['PM2.5'] <= 50 and row['PM10'] <= 30 and row['SO2'] <= 40 and row['NO2'] <= 40 and row['CO'] <= 1000 and row['O3'] <= 50:
+            return "Good"
+        elif row['PM2.5'] <= 100 or row['PM10'] <= 60 or row['SO2'] <= 80 or row['NO2'] <= 80 or row['CO'] <= 2000 or row['O3'] <= 100: 
+            return "Satisfactory"
+        elif row['PM2.5'] <= 250 or row['PM10'] <= 90 or row['SO2'] <= 380 or row['NO2'] <= 180 or row['CO'] <= 10000 or row['O3'] <= 168:
+            return "Moderate"
+        elif row['PM2.5'] <= 350 or row['PM10'] <= 120 or row['SO2'] <= 800 or row['NO2'] <= 280 or row['CO'] <= 17000 or row['O3'] <= 208: 
+            return "Poor"
+        elif row['PM2.5'] <= 430 or row['PM10'] <= 250 or row['SO2'] <= 1600 or row['NO2'] <= 400 or row['CO'] <= 34000 or row['O3'] <= 748:
+            return "Very Poor"
+        else:
+            return "Severe"  
+
+    air_quality_df['kategori'] = air_quality_df.apply(categorize_air_quality, axis=1)
+
+    return air_quality_df
+
+
 all_df = pd.read_csv("all_data.csv")
 
-pm25_data = pm25_trend(all_df)
-air_pollution = create_air_pollution(all_df)
-rfm_df = create_rfm_df(all_df)
-map_df = create_folium(all_df)
+years = all_df['year'].unique()
+stations = all_df['station'].unique()
 
+# sidebar
+with st.sidebar:
+    selected_year = st.multiselect("Year:", years, default=years)
+    selected_station = st.multiselect("Station:", stations, default=stations)
+    
+    filtered_df = all_df[(all_df['year'].isin(selected_year)) & (all_df['station'].isin(selected_station))]
+    
+pm25_data = pm25_trend(filtered_df)
+air_pollution = create_air_pollution(filtered_df)
+map_df = create_folium(filtered_df)
+aqi_df = air_quality_trend(filtered_df)
 
 st.header("Air Pollution in China")
 
-st.subheader("Air Pollution Trend")
 
+air_quality_category = aqi_df.iloc[0]['kategori']
+
+st.metric("AQI", value=air_quality_category)
+
+filtered_aqi = aqi_df[aqi_df['kategori'] == air_quality_category][['year', 'station', 'PM2.5', 'PM10', 'SO2', 'NO2', 'CO', 'O3']]
+st.dataframe(filtered_aqi)
+    
+
+st.subheader("Air Pollution Trend")
 
 plt.figure(figsize=(12,6))
 sns.lineplot(data=pm25_data, x='year', y='PM2.5', hue='station', marker='o')
@@ -72,7 +95,7 @@ plt.grid(True, linestyle='--', alpha=0.5, )
 
 st.pyplot(plt)
 
-st.subheader("Hubungan Curah Hujan dengan PM2.5 di Berbagai Kota")
+st.subheader("Hubungan Curah Hujan dengan PM2.5")
 
 plt.figure(figsize=(10,6))
 sns.scatterplot(data=air_pollution, x='RAIN', y='PM2.5', hue='station', style='station', alpha=0.7)
@@ -86,57 +109,6 @@ plt.legend(title='Stasiun', bbox_to_anchor=(1,1))
 plt.grid(True, linestyle='--', alpha=0.5)
 
 st.pyplot(plt)
-
-
-
-st.subheader("Daerah dengan Polusi Tertinggi on RFM Parameters")
-
-col1, col2, col3, = st.columns(3)
-with col1:
-    avg_recency = round(rfm_df.Recency.mean(), 1)
-    st.metric("Average Recency (days)", value=avg_recency)
-    
-with col2:
-    avg_frequency = round(rfm_df.Frequency.mean(), 2)
-    st.metric("Average Frequency", value=avg_frequency)
-    
-with col3:
-    avg_magnitude = round(rfm_df.Magnitude.mean(), 2)
-    st.metric("Average PM2.5", value=avg_magnitude)
-    
-
-fig, ax = plt.subplots(nrows=1, ncols=3, figsize=(35,15))
-colors = ['#03045e', '#023e8a', '#0077b6', '#0096c7', '#00b4d8', '#48cae4', '#90e0ef',
-          '#ade8f4', '#caf0f8', '#41a7f5', '#64b7f6', '#90cbf9']
-
-sns.barplot(y="Recency", x='station', 
-            data=rfm_df.sort_values(by='Recency', ascending=False),
-            palette=colors, ax=ax[0])
-ax[0].set_ylabel(None)
-ax[0].set_xlabel("Station", fontsize=30)
-ax[0].set_title("By Recency (days)", loc='center', fontsize=50)
-ax[0].tick_params(axis='y', labelsize=30)
-ax[0].tick_params(axis='x', labelsize=35, rotation=90)
-
-sns.barplot(y="Frequency", x='station', 
-            data=rfm_df.sort_values(by='Frequency', ascending=False),
-            palette=colors, ax=ax[1])
-ax[1].set_ylabel(None)
-ax[1].set_xlabel("Station", fontsize=30)
-ax[1].set_title("By Frequency", loc='center', fontsize=50)
-ax[1].tick_params(axis='y', labelsize=30)
-ax[1].tick_params(axis='x', labelsize=35, rotation=90)
-
-sns.barplot(y="Magnitude", x='station', 
-            data=rfm_df.sort_values(by='Magnitude', ascending=False),
-            palette=colors, ax=ax[2])
-ax[2].set_ylabel(None)
-ax[2].set_xlabel("Station", fontsize=30)
-ax[2].set_title("By PM2.5", loc='center', fontsize=50)
-ax[2].tick_params(axis='y', labelsize=30)
-ax[2].tick_params(axis='x', labelsize=35, rotation=90)
-
-st.pyplot(fig)
 
 
 station_coords = {
